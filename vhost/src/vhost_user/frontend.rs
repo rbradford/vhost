@@ -613,8 +613,7 @@ impl VhostUserFrontend for Frontend {
         let hdr = node.send_request_with_body(
             FrontendReq::SET_DEVICE_STATE_FD,
             &body,
-            // Transfer ownership of this FD to the backend.
-            Some(&[fd.into_raw_fd()]),
+            Some(&[fd.as_raw_fd()]),
         )?;
 
         let (body, files) = node.recv_reply_with_optional_files::<VhostUserU64>(&hdr)?;
