@@ -137,6 +137,15 @@ pub trait VhostUserBackend: Send + Sync {
         None
     }
 
+    /// Stop processing requests from the specified vring.
+    ///
+    /// This is called for `GET_VRING_BASE` after the vring is marked not ready and
+    /// unregistered. Asynchronous backends should block until previously accepted requests
+    /// have completed. Wrapper implementations may hold their backend lock during this call.
+    fn stop_vring(&self, _queue_index: u32) -> Result<()> {
+        Ok(())
+    }
+
     /// Handle IO events for backend registered file descriptors.
     ///
     /// This function gets called if the backend registered some additional listeners onto specific
@@ -288,6 +297,15 @@ pub trait VhostUserBackendMut: Send + Sync {
         None
     }
 
+    /// Stop processing requests from the specified vring.
+    ///
+    /// This is called for `GET_VRING_BASE` after the vring is marked not ready and
+    /// unregistered. Asynchronous backends should block until previously accepted requests
+    /// have completed. Wrapper implementations may hold their backend lock during this call.
+    fn stop_vring(&mut self, _queue_index: u32) -> Result<()> {
+        Ok(())
+    }
+
     /// Handle IO events for backend registered file descriptors.
     ///
     /// This function gets called if the backend registered some additional listeners onto specific
@@ -402,6 +420,10 @@ impl<T: VhostUserBackend> VhostUserBackend for Arc<T> {
         self.deref().exit_event(thread_index)
     }
 
+    fn stop_vring(&self, queue_index: u32) -> Result<()> {
+        self.deref().stop_vring(queue_index)
+    }
+
     fn handle_event(
         &self,
         device_event: u16,
@@ -493,6 +515,10 @@ impl<T: VhostUserBackendMut> VhostUserBackend for Mutex<T> {
 
     fn exit_event(&self, thread_index: usize) -> Option<(EventConsumer, EventNotifier)> {
         self.lock().unwrap().exit_event(thread_index)
+    }
+
+    fn stop_vring(&self, queue_index: u32) -> Result<()> {
+        self.lock().unwrap().stop_vring(queue_index)
     }
 
     fn handle_event(
@@ -591,6 +617,10 @@ impl<T: VhostUserBackendMut> VhostUserBackend for RwLock<T> {
         self.read().unwrap().exit_event(thread_index)
     }
 
+    fn stop_vring(&self, queue_index: u32) -> Result<()> {
+        self.write().unwrap().stop_vring(queue_index)
+    }
+
     fn handle_event(
         &self,
         device_event: u16,
@@ -637,6 +667,7 @@ pub mod tests {
         event_idx: bool,
         acked_features: u64,
         exit_event_fds: Vec<(EventConsumer, EventNotifier)>,
+        stop_calls: usize,
     }
 
     impl MockVhostBackend {
@@ -646,6 +677,7 @@ pub mod tests {
                 event_idx: false,
                 acked_features: 0,
                 exit_event_fds: vec![],
+                stop_calls: 0,
             };
 
             // Create a event_fd for each thread. We make it NONBLOCKing in
@@ -663,6 +695,10 @@ pub mod tests {
 
         pub fn events(&self) -> u64 {
             self.events
+        }
+
+        pub fn stop_calls(&self) -> usize {
+            self.stop_calls
         }
     }
 
@@ -737,6 +773,11 @@ pub mod tests {
                     r.try_clone().expect("Failed to clone EventNotifier"),
                 )
             })
+        }
+
+        fn stop_vring(&mut self, _queue_index: u32) -> Result<()> {
+            self.stop_calls += 1;
+            Ok(())
         }
 
         fn handle_event(

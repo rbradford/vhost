@@ -461,6 +461,10 @@ where
         vring.set_queue_ready(false);
         self.update_vring_registration(vring, index as u8)?;
 
+        self.backend
+            .stop_vring(index)
+            .map_err(VhostUserError::ReqHandlerError)?;
+
         let next_avail = vring.queue_next_avail();
 
         vring.set_kick(None);
@@ -824,6 +828,27 @@ mod tests {
     use vhost::vhost_user::message::VhostUserVirtioFeatures;
     use vm_memory::{GuestAddress, GuestMemoryAtomic, GuestMemoryMmap};
     use vmm_sys_util::event::{new_event_consumer_and_notifier, EventFlag};
+
+    #[test]
+    fn test_get_vring_base_stops_vring() {
+        let mem = GuestMemoryAtomic::new(
+            GuestMemoryMmap::<()>::from_ranges(&[(GuestAddress(0x100000), 0x10000)]).unwrap(),
+        );
+        let backend = Arc::new(Mutex::new(MockVhostBackend::new()));
+        let mut handler = VhostUserHandler::new(backend.clone(), mem).unwrap();
+        let vring = handler.vrings[0].clone();
+        vring.set_queue_size(8);
+        vring.set_queue_info(0x100000, 0x101000, 0x102000).unwrap();
+        vring.set_queue_ready(true);
+
+        let state = handler.get_vring_base(0).unwrap();
+        let index = state.index;
+        let num = state.num;
+
+        assert_eq!(index, 0);
+        assert_eq!(num, 0);
+        assert_eq!(backend.lock().unwrap().stop_calls(), 1);
+    }
 
     #[test]
     fn test_no_lost_kicks() {
